@@ -1,0 +1,245 @@
+﻿@page "/"
+
+@using RetailConsole.Services
+@using RetailConsole.Models
+
+@inject IExceptionService ExceptionService
+
+<h3>Retail Exception Dashboard</h3>
+
+@if (exceptions == null)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <h5>Search</h5>
+    <div>
+    <div class="search-bar">
+    <input placeholder="Search exceptions..."
+           style="margin-bottom: 15px; padding: 6px; width: 300px;"
+           @oninput="OnSearchChanged" 
+    />
+    <select style="margin-left: 15px; padding: 6px;"
+            @onchange="OnStatusFilterChanged">
+
+        <option value="">All Status</option>
+        <option value="Open">Open</option>
+        <option value="InReview">InReview</option>
+        <option value="PendingApproval">PendingApproval</option>
+        <option value="Resolved">Resolved</option>
+        <option value="Escalated">Escalated</option>
+        <option value="Closed">Closed</option>
+    </select>
+    </div>
+    </div>
+    @if (exceptions != null && !exceptions.Any())
+    {
+        <div class="empty-state">
+            No exceptions found!!
+        </div>
+    }
+    <div class="card-container">        
+    <div class="kpi-container">
+            <div class="kpi-card">Open <span>@allExceptions.Count(e => e.Status == ExceptionStatus.Open)</span></div>
+            <div class="kpi-card">In Review <span>@allExceptions.Count(e => e.Status == ExceptionStatus.InReview)</span></div>
+            <div class="kpi-card">Resolved <span>@allExceptions.Count(e => e.Status == ExceptionStatus.Resolved)</span></div>
+            <div class="kpi-card">Escalated <span>@allExceptions.Count(e => e.Status == ExceptionStatus.Escalated)</span></div>
+            <div class="kpi-card">PendingApproval <span>@allExceptions.Count(e => e.Status == ExceptionStatus.PendingApproval)</span></div>
+            <div class="kpi-card">Closed <span>@allExceptions.Count(e => e.Status == ExceptionStatus.Closed)</span></div>
+    </div>
+    <div style="max-height: 400px; overflow-y: auto;">
+    <div class="table-card">
+    <table style="width:100%; border-collapse: collapse;">
+        <thead>
+            <tr style="border-bottom: 2px solid #ccc; text-align: left;">
+                <th @onclick='@(() => SortBy("Type"))' style="cursor:pointer;">
+                    Type <span>@GetSortIcon("Type")</span>
+                </th>
+
+                <th @onclick='@(() => SortBy("Item"))' style="cursor:pointer;">
+                    Item @(GetSortIcon("Item"))
+                </th>
+
+                <th @onclick='@(() => SortBy("Store"))' style="cursor:pointer;">
+                    Store @(GetSortIcon("Store"))
+                </th>
+
+                <th @onclick='@(() => SortBy("Updated"))' style="cursor:pointer;">
+                    Updated @(GetSortIcon("Updated"))
+                </th>
+
+                <th @onclick='@(() => SortBy("Status"))' style="cursor:pointer;">
+                    Status @(GetSortIcon("Status"))
+                </th>
+
+                <th>Action</th>
+            </tr>
+        </thead>
+
+        <tbody>
+            @foreach (var ex in exceptions)
+            {
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td><b>@ex.ExceptionType</b></td>
+                    <td>@ex.ItemDescription</td>
+                    <td>@ex.Store</td>
+                    <td>@ex.UpdatedAt.ToString("MMM dd")</td>
+                    <td>
+                        <span style="@GetStatusBadgeStyle(ex.Status)">
+                            @ex.Status
+                        </span>
+                    </td>
+
+                    <td>
+                        @if (ex.Status != ExceptionStatus.Resolved && ex.Status != ExceptionStatus.Closed)
+                        {
+                            <button title = "Mark this exception as resolved"
+                                @onclick="() => Resolve(ex.ExceptionId)">
+                                Resolve
+                            </button>
+                        }
+                        else
+                        {
+                            <span style="color: gray;">✔ Done</span>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    </div>
+    </div>
+    </div>
+}
+
+@code {
+    private List<RetailException>? exceptions;
+    private string searchText = "";
+    private string selectedStatus = "";
+    private string? sortField = null;
+    private bool sortDescending = false;
+    private List<RetailException> allExceptions = new();
+    protected override async Task OnInitializedAsync()
+    {
+        allExceptions = await ExceptionService.GetExceptionsAsync();
+        exceptions = allExceptions.ToList();
+    }
+    private string GetStatusColor(ExceptionStatus status)
+    {
+        return status switch
+        {
+            ExceptionStatus.Open => "red",
+            ExceptionStatus.InReview => "orange",
+            ExceptionStatus.PendingApproval => "blue",
+            ExceptionStatus.Resolved => "green",
+            ExceptionStatus.Escalated => "purple",
+            ExceptionStatus.Closed => "gray",
+            _ => "black"
+        };
+    }
+    async Task Resolve(string id)
+    {
+        await ExceptionService.ResolveExceptionAsync(id, new ResolutionRequest
+        {
+            Action = ResolutionAction.MarkResolved,
+            Note = "Resolved from UI",
+            ResolvedBy = "User"
+        });
+
+        allExceptions = await ExceptionService.GetExceptionsAsync();
+        ApplyFilters();
+    }
+    void OnSearchChanged(ChangeEventArgs e)
+    {
+        searchText = e.Value?.ToString() ?? "";
+        ApplyFilters();
+    }
+    void OnStatusFilterChanged(ChangeEventArgs e)
+    {
+        selectedStatus = e.Value?.ToString() ?? "";
+        ApplyFilters();
+    }
+    void ApplyFilters()
+    {
+        var filtered = allExceptions.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var query = searchText.ToLower();
+
+            filtered = filtered.Where(ex =>
+                ex.ExceptionType.ToLower().Contains(query) ||
+                ex.ItemDescription.ToLower().Contains(query) ||
+                ex.Store.ToLower().Contains(query) ||
+                ex.Status.ToString().ToLower().Contains(query)
+            );
+        }
+
+        if (!string.IsNullOrWhiteSpace(selectedStatus))
+        {
+            filtered = filtered.Where(ex => ex.Status.ToString() == selectedStatus);
+        }
+
+        filtered = sortField switch
+        {
+            "Type" => sortDescending
+                ? filtered.OrderByDescending(x => x.ExceptionType)
+                : filtered.OrderBy(x => x.ExceptionType),
+
+            "Item" => sortDescending
+                ? filtered.OrderByDescending(x => x.ItemDescription)
+                : filtered.OrderBy(x => x.ItemDescription),
+
+            "Store" => sortDescending
+                ? filtered.OrderByDescending(x => x.Store)
+                : filtered.OrderBy(x => x.Store),
+
+            "Status" => sortDescending
+                ? filtered.OrderByDescending(x => x.Status)
+                : filtered.OrderBy(x => x.Status),
+
+            "Updated" => sortDescending
+                ? filtered.OrderByDescending(x => x.UpdatedAt)
+                : filtered.OrderBy(x => x.UpdatedAt),
+
+            _ => filtered
+        };
+
+        exceptions = filtered.ToList();
+    }
+    void SortBy(string field)
+    {
+        if (sortField == field)
+        {
+            sortDescending = !sortDescending;
+        }
+        else
+        {
+            sortField = field;
+            sortDescending = false;
+        }
+
+        ApplyFilters();
+    }
+    string GetSortIcon(string field)
+    {
+        if (sortField != field)
+            return "↕";
+
+        return sortDescending ? " ↓" : " ↑";
+    }
+    string GetStatusBadgeStyle(ExceptionStatus status)
+    {
+        return status switch
+        {
+            ExceptionStatus.Open => "background-color:#ffe5e5; color:red; padding:4px 8px; border-radius:12px; font-weight:500;",
+            ExceptionStatus.InReview => "background-color:#fff4e5; color:orange; padding:4px 8px; border-radius:12px; font-weight:500;",
+            ExceptionStatus.PendingApproval => "background-color:#e5f0ff; color:blue; padding:4px 8px; border-radius:12px; font-weight:500;",
+            ExceptionStatus.Resolved => "background-color:#e6ffe6; color:green; padding:4px 8px; border-radius:12px; font-weight:500;",
+            ExceptionStatus.Escalated => "background-color:#f3e5ff; color:purple; padding:4px 8px; border-radius:12px; font-weight:500;",
+            ExceptionStatus.Closed => "background-color:#eeeeee; color:gray; padding:4px 8px; border-radius:12px; font-weight:500;",
+            _ => ""
+        };
+    }
+}
